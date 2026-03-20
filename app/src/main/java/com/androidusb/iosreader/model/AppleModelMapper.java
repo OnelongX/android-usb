@@ -94,7 +94,16 @@ public class AppleModelMapper {
     }
 
     public static String getDisplayName(String productType) {
+        if (productType == null) return "未知设备";
         String name = MODEL_MAP.get(productType);
-        return name != null ? name : productType;
+        if (name != null) return name;
+
+        // Fallback: parse "iPhone15,3" → "iPhone (15,3)"
+        int commaIdx = productType.indexOf(',');
+        if (commaIdx > 0) {
+            String family = productType.substring(0, commaIdx).replaceAll("\\d+$", "");
+            return family + " (" + productType + ")";
+        }
+        return productType;
     }
 }

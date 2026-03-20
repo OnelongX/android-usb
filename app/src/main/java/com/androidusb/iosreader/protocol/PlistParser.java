@@ -1,6 +1,6 @@
 package com.androidusb.iosreader.protocol;
 
-import android.util.Log;
+import com.androidusb.iosreader.util.Logger;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -38,7 +38,7 @@ public class PlistParser {
             FACTORY.setExpandEntityReferences(false);
             FACTORY.setXIncludeAware(false);
         } catch (ParserConfigurationException e) {
-            Log.e(TAG, "Failed to configure XML parser security features", e);
+            Logger.e(TAG, "Failed to configure XML parser security features", e);
         }
     }
 
@@ -62,7 +62,7 @@ public class PlistParser {
 
             return new HashMap<>();
         } catch (Exception e) {
-            Log.e(TAG, "Failed to parse plist", e);
+            Logger.e(TAG, "Failed to parse plist", e);
             throw new IOException("Plist parse error: " + e.getMessage(), e);
         }
     }
@@ -98,14 +98,14 @@ public class PlistParser {
                 try {
                     return Long.parseLong(elem.getTextContent().trim());
                 } catch (NumberFormatException e) {
-                    Log.w(TAG, "Malformed integer value: " + elem.getTextContent());
+                    Logger.w(TAG, "Malformed integer value: " + elem.getTextContent());
                     return 0L;
                 }
             case "real":
                 try {
                     return Double.parseDouble(elem.getTextContent().trim());
                 } catch (NumberFormatException e) {
-                    Log.w(TAG, "Malformed real value: " + elem.getTextContent());
+                    Logger.w(TAG, "Malformed real value: " + elem.getTextContent());
                     return 0.0;
                 }
             case "true":
@@ -119,7 +119,7 @@ public class PlistParser {
                     return android.util.Base64.decode(elem.getTextContent().trim(),
                             android.util.Base64.DEFAULT);
                 } catch (Exception e) {
-                    Log.w(TAG, "Failed to decode base64 data", e);
+                    Logger.w(TAG, "Failed to decode base64 data", e);
                     return new byte[0];
                 }
             case "array":

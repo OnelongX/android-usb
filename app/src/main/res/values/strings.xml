@@ -8,6 +8,9 @@
     <string name="reading_info">正在读取设备信息...</string>
     <string name="btn_connect">连接设备</string>
     <string name="btn_refresh">刷新信息</string>
+    <string name="btn_share">分享</string>
+    <string name="retry_connecting">正在重试连接 (%1$d/%2$d)...</string>
+    <string name="connection_failed">连接失败</string>
     <string name="device_name">设备名称</string>
     <string name="device_model">设备型号</string>
     <string name="ios_version">iOS 版本</string>

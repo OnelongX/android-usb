@@ -1,6 +1,6 @@
 package com.androidusb.iosreader.protocol;
 
-import android.util.Log;
+import com.androidusb.iosreader.util.Logger;
 
 import com.androidusb.iosreader.model.iOSDeviceInfo;
 import com.androidusb.iosreader.usb.UsbMuxConnection;
@@ -44,7 +44,7 @@ public class LockdowndClient {
 
         Map<String, Object> response = sendAndReceive(request);
         Object type = response.get("Type");
-        Log.i(TAG, "QueryType response: " + type);
+        Logger.i(TAG, "QueryType response: " + type);
         return "com.apple.mobile.lockdown".equals(type);
     }
 
@@ -83,7 +83,7 @@ public class LockdowndClient {
                 if (charging instanceof Boolean) info.setBatteryCharging((Boolean) charging);
             }
         } catch (IOException e) {
-            Log.w(TAG, "Failed to get battery info: " + e.getMessage());
+            Logger.w(TAG, "Failed to get battery info: " + e.getMessage());
         }
 
         // Get disk usage info
@@ -94,7 +94,7 @@ public class LockdowndClient {
                 info.setAvailableDiskCapacity(getLong(dv, "AmountDataAvailable"));
             }
         } catch (IOException e) {
-            Log.w(TAG, "Failed to get disk info: " + e.getMessage());
+            Logger.w(TAG, "Failed to get disk info: " + e.getMessage());
         }
 
         return info;
@@ -130,7 +130,7 @@ public class LockdowndClient {
         packet[3] = (byte) xmlBytes.length;
         System.arraycopy(xmlBytes, 0, packet, 4, xmlBytes.length);
 
-        Log.d(TAG, "Sending lockdownd request: " + request.get("Request"));
+        Logger.d(TAG, "Sending lockdownd request: " + request.get("Request"));
         usbConnection.sendRaw(packet);
 
         // After usbmux connect, we're in raw TCP mode.
@@ -153,7 +153,7 @@ public class LockdowndClient {
             }
         }
 
-        Log.d(TAG, "Received lockdownd response (" + responseXml.length() + " chars)");
+        Logger.d(TAG, "Received lockdownd response (" + responseXml.length() + " chars)");
 
         Map<String, Object> result = PlistParser.parse(responseXml);
 

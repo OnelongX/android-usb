@@ -6,7 +6,7 @@ import android.hardware.usb.UsbDeviceConnection;
 import android.hardware.usb.UsbEndpoint;
 import android.hardware.usb.UsbInterface;
 import android.hardware.usb.UsbManager;
-import android.util.Log;
+import com.androidusb.iosreader.util.Logger;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -61,7 +61,7 @@ public class UsbMuxConnection {
     public UsbDevice findAppleDevice() {
         for (UsbDevice dev : usbManager.getDeviceList().values()) {
             if (dev.getVendorId() == APPLE_VENDOR_ID) {
-                Log.i(TAG, "Found Apple device: " + dev.getDeviceName()
+                Logger.i(TAG, "Found Apple device: " + dev.getDeviceName()
                         + " (product=" + dev.getProductId() + ")");
                 this.device = dev;
                 return dev;
@@ -113,7 +113,7 @@ public class UsbMuxConnection {
             // Allocate reusable receive buffer
             receiveBuffer = new byte[endpointIn.getMaxPacketSize()];
 
-            Log.i(TAG, "USB connection opened. IN maxPacket=" + endpointIn.getMaxPacketSize()
+            Logger.i(TAG, "USB connection opened. IN maxPacket=" + endpointIn.getMaxPacketSize()
                     + " OUT maxPacket=" + endpointOut.getMaxPacketSize());
             return true;
 
@@ -131,7 +131,7 @@ public class UsbMuxConnection {
             if (iface.getInterfaceClass() == 0xFF
                     && iface.getInterfaceSubclass() == 0xFE
                     && iface.getInterfaceProtocol() == 2) {
-                Log.i(TAG, "Found usbmux interface at index " + i);
+                Logger.i(TAG, "Found usbmux interface at index " + i);
                 return iface;
             }
         }
@@ -140,7 +140,7 @@ public class UsbMuxConnection {
         for (int i = 0; i < device.getInterfaceCount(); i++) {
             UsbInterface iface = device.getInterface(i);
             if (iface.getInterfaceClass() == 0xFF && hasBulkEndpoints(iface)) {
-                Log.i(TAG, "Found vendor-specific interface at index " + i);
+                Logger.i(TAG, "Found vendor-specific interface at index " + i);
                 return iface;
             }
         }
@@ -213,7 +213,7 @@ public class UsbMuxConnection {
         }
 
         int resultCode = respBuf.getInt(16);
-        Log.i(TAG, "usbmux response: type=" + respType + " tag=" + respTag
+        Logger.i(TAG, "usbmux response: type=" + respType + " tag=" + respTag
                 + " result=" + resultCode);
 
         if (resultCode != 0) {
@@ -292,7 +292,7 @@ public class UsbMuxConnection {
         endpointOut = null;
         usbInterface = null;
         receiveBuffer = null;
-        Log.i(TAG, "USB connection closed");
+        Logger.i(TAG, "USB connection closed");
     }
 
     public boolean isConnected() {

@@ -44,6 +44,13 @@
         android:padding="20dp"
         android:gravity="center">
 
+        <ProgressBar
+            android:id="@+id/progressBar"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:visibility="gone"
+            android:layout_marginBottom="8dp" />
+
         <TextView
             android:id="@+id/tvConnectionInfo"
             android:layout_width="wrap_content"
@@ -51,6 +58,18 @@
             android:text="@string/no_device"
             android:textSize="16sp"
             android:textColor="#666666" />
+
+        <!-- Error detail (persistent, shown on failure) -->
+        <TextView
+            android:id="@+id/tvErrorDetail"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:padding="8dp"
+            android:background="#FFF3E0"
+            android:textColor="#E65100"
+            android:textSize="12sp"
+            android:visibility="gone" />
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -75,6 +94,16 @@
                 android:text="@string/btn_refresh"
                 android:textSize="14sp"
                 android:backgroundTint="#FF6F00"
+                android:visibility="gone" />
+
+            <Button
+                android:id="@+id/btnShare"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:layout_marginStart="12dp"
+                android:text="@string/btn_share"
+                android:textSize="14sp"
+                android:backgroundTint="#4CAF50"
                 android:visibility="gone" />
         </LinearLayout>
     </LinearLayout>

@@ -10,47 +10,56 @@ import android.hardware.usb.UsbManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.util.Log;
 import android.view.View;
 import android.widget.Button;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
 
 import com.androidusb.iosreader.R;
 import com.androidusb.iosreader.model.iOSDeviceInfo;
 import com.androidusb.iosreader.protocol.LockdowndClient;
+import com.androidusb.iosreader.usb.ConnectionState;
 import com.androidusb.iosreader.usb.UsbMuxConnection;
+import com.androidusb.iosreader.util.DeviceInfoExporter;
+import com.androidusb.iosreader.util.Logger;
+import com.androidusb.iosreader.util.RetryHelper;
 
 import java.io.IOException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Main activity that handles USB device detection and displays iOS device info.
+ * Uses a ConnectionState machine to prevent race conditions and invalid state transitions.
  */
 public class MainActivity extends AppCompatActivity {
     private static final String TAG = "MainActivity";
     private static final String ACTION_USB_PERMISSION = "com.androidusb.iosreader.USB_PERMISSION";
+    private static final int MAX_CONNECT_RETRIES = 3;
 
     private UsbManager usbManager;
     private UsbMuxConnection muxConnection;
     private volatile LockdowndClient lockdowndClient;
-    private final AtomicBoolean isOperationInProgress = new AtomicBoolean(false);
+    private volatile ConnectionState state = ConnectionState.IDLE;
     private volatile boolean isDestroyed = false;
+    private iOSDeviceInfo lastDeviceInfo;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    private final Object stateLock = new Object();
 
     // UI elements
+    private ProgressBar progressBar;
     private TextView tvStatus;
     private TextView tvConnectionInfo;
+    private TextView tvErrorDetail;
     private Button btnConnect;
     private Button btnRefresh;
+    private Button btnShare;
     private LinearLayout deviceInfoContainer;
     private TextView tvDeviceName, tvDeviceModel, tvIOSVersion, tvSerialNumber;
     private TextView tvUDID, tvWifiMAC, tvBluetoothMAC, tvBattery;
@@ -64,16 +73,17 @@ public class MainActivity extends AppCompatActivity {
             if (ACTION_USB_PERMISSION.equals(action)) {
                 boolean granted = intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false);
                 if (granted) {
-                    Log.i(TAG, "USB permission granted");
+                    Logger.i(TAG, "USB permission granted");
                     connectToDevice();
                 } else {
-                    showStatus("USB 权限被拒绝", false);
+                    transitionTo(ConnectionState.ERROR);
+                    showError("USB 权限被拒绝", "请允许 USB 访问权限以连接 iOS 设备");
                 }
             } else if (UsbManager.ACTION_USB_DEVICE_ATTACHED.equals(action)) {
-                Log.i(TAG, "USB device attached");
+                Logger.i(TAG, "USB device attached");
                 checkForDevice();
             } else if (UsbManager.ACTION_USB_DEVICE_DETACHED.equals(action)) {
-                Log.i(TAG, "USB device detached");
+                Logger.i(TAG, "USB device detached");
                 onDeviceDisconnected();
             }
         }
@@ -104,10 +114,13 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void initViews() {
+        progressBar = findViewById(R.id.progressBar);
         tvStatus = findViewById(R.id.tvStatus);
         tvConnectionInfo = findViewById(R.id.tvConnectionInfo);
+        tvErrorDetail = findViewById(R.id.tvErrorDetail);
         btnConnect = findViewById(R.id.btnConnect);
         btnRefresh = findViewById(R.id.btnRefresh);
+        btnShare = findViewById(R.id.btnShare);
         deviceInfoContainer = findViewById(R.id.deviceInfoContainer);
 
         tvDeviceName = findViewById(R.id.tvDeviceName);
@@ -123,15 +136,18 @@ public class MainActivity extends AppCompatActivity {
         tvStorage = findViewById(R.id.tvStorage);
 
         btnConnect.setOnClickListener(v -> {
-            if (isOperationInProgress.compareAndSet(false, true)) {
+            if (state.canConnect()) {
                 checkForDevice();
-                // Reset after brief delay to prevent rapid clicks
-                mainHandler.postDelayed(() -> isOperationInProgress.set(false), 1000);
             }
         });
         btnRefresh.setOnClickListener(v -> {
-            if (isOperationInProgress.compareAndSet(false, true)) {
+            if (state.canRead()) {
                 readDeviceInfo();
+            }
+        });
+        btnShare.setOnClickListener(v -> {
+            if (lastDeviceInfo != null) {
+                DeviceInfoExporter.share(this, lastDeviceInfo);
             }
         });
     }
@@ -145,14 +161,14 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void checkForDevice() {
+        hideError();
         UsbDevice device = muxConnection.findAppleDevice();
         if (device != null) {
-            showStatus("发现 Apple 设备", false);
             String productName = device.getProductName();
             tvConnectionInfo.setText("发现设备: " + (productName != null ? productName : "Apple Device"));
             requestPermissionAndConnect(device);
         } else {
-            showStatus(getString(R.string.disconnected), false);
+            transitionTo(ConnectionState.IDLE);
             tvConnectionInfo.setText(R.string.no_device);
         }
     }
@@ -165,82 +181,107 @@ public class MainActivity extends AppCompatActivity {
                     new Intent(ACTION_USB_PERMISSION),
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE);
             usbManager.requestPermission(device, pi);
-            showStatus("请求 USB 权限...", false);
+            tvStatus.setText("请求 USB 权限...");
         }
     }
 
     private void connectToDevice() {
-        showStatus(getString(R.string.connecting), false);
+        if (!transitionTo(ConnectionState.CONNECTING)) return;
+
+        showProgress(true);
+        hideError();
+        tvStatus.setText(R.string.connecting);
         btnConnect.setEnabled(false);
 
         executor.execute(() -> {
             try {
-                muxConnection.open();
-                muxConnection.connectToLockdownd();
-                LockdowndClient client = new LockdowndClient(muxConnection);
+                // Retry connection with exponential backoff
+                RetryHelper.execute(MAX_CONNECT_RETRIES, attempt -> {
+                    if (isDestroyed) throw new IOException("Activity destroyed");
 
+                    // Update UI with retry progress
+                    if (attempt > 1) {
+                        final int a = attempt;
+                        postToMain(() -> tvStatus.setText(
+                                getString(R.string.retry_connecting, a, MAX_CONNECT_RETRIES)));
+                    }
+
+                    muxConnection.open();
+                    try {
+                        muxConnection.connectToLockdownd();
+                    } catch (IOException e) {
+                        muxConnection.close();
+                        throw e;
+                    }
+                    return true;
+                });
+
+                LockdowndClient client = new LockdowndClient(muxConnection);
                 boolean valid = client.queryType();
                 if (!valid) {
                     muxConnection.close();
-                    throw new IOException("lockdownd QueryType failed");
+                    throw new IOException("lockdownd 验证失败：设备可能不支持或需要信任此设备");
                 }
 
                 lockdowndClient = client;
+                transitionTo(ConnectionState.CONNECTED);
 
-                if (!isDestroyed) {
-                    mainHandler.post(() -> {
-                        showStatus(getString(R.string.connected), true);
-                        btnRefresh.setVisibility(View.VISIBLE);
-                        readDeviceInfo();
-                    });
-                }
+                postToMain(() -> {
+                    showProgress(false);
+                    tvStatus.setText(R.string.connected);
+                    btnRefresh.setVisibility(View.VISIBLE);
+                    readDeviceInfo();
+                });
 
             } catch (IOException e) {
-                Log.e(TAG, "Connection failed", e);
+                Logger.e(TAG, "Connection failed", e);
                 muxConnection.close();
-                if (!isDestroyed) {
-                    mainHandler.post(() -> {
-                        showStatus("连接失败: " + e.getMessage(), false);
-                        btnConnect.setEnabled(true);
-                    });
-                }
+                transitionTo(ConnectionState.ERROR);
+
+                postToMain(() -> {
+                    showProgress(false);
+                    showError(getString(R.string.connection_failed), e.getMessage());
+                    btnConnect.setEnabled(true);
+                });
             }
         });
     }
 
     private void readDeviceInfo() {
         final LockdowndClient client = lockdowndClient;
-        if (client == null) {
-            showStatus("未连接设备", false);
-            isOperationInProgress.set(false);
-            return;
-        }
+        if (client == null || !transitionTo(ConnectionState.READING)) return;
 
-        showStatus(getString(R.string.reading_info), true);
+        showProgress(true);
+        hideError();
+        tvStatus.setText(R.string.reading_info);
 
         executor.execute(() -> {
             try {
                 iOSDeviceInfo info = client.getDeviceInfo();
-                if (!isDestroyed) {
-                    mainHandler.post(() -> displayDeviceInfo(info));
-                }
+                lastDeviceInfo = info;
+                transitionTo(ConnectionState.CONNECTED);
+
+                postToMain(() -> {
+                    showProgress(false);
+                    displayDeviceInfo(info);
+                });
+
             } catch (IOException e) {
-                Log.e(TAG, "Failed to read device info", e);
-                if (!isDestroyed) {
-                    mainHandler.post(() -> {
-                        showStatus("读取信息失败: " + e.getMessage(), true);
-                        Toast.makeText(this, "读取失败，请重试", Toast.LENGTH_SHORT).show();
-                    });
-                }
-            } finally {
-                isOperationInProgress.set(false);
+                Logger.e(TAG, "Failed to read device info", e);
+                transitionTo(ConnectionState.CONNECTED);
+
+                postToMain(() -> {
+                    showProgress(false);
+                    showError("读取信息失败", e.getMessage());
+                });
             }
         });
     }
 
     private void displayDeviceInfo(iOSDeviceInfo info) {
         deviceInfoContainer.setVisibility(View.VISIBLE);
-        showStatus(getString(R.string.connected), true);
+        btnShare.setVisibility(View.VISIBLE);
+        tvStatus.setText(R.string.connected);
 
         setText(tvDeviceName, info.getDeviceName());
         setText(tvDeviceModel, info.getDisplayModel());
@@ -259,6 +300,62 @@ public class MainActivity extends AppCompatActivity {
         setText(tvBattery, batteryText);
     }
 
+    // --- State management ---
+
+    private boolean transitionTo(ConnectionState newState) {
+        synchronized (stateLock) {
+            ConnectionState old = state;
+            state = newState;
+            Logger.d(TAG, "State: " + old + " → " + newState);
+            postToMain(this::updateUIForState);
+            return true;
+        }
+    }
+
+    private void updateUIForState() {
+        switch (state) {
+            case IDLE:
+            case DISCONNECTED:
+                tvStatus.setText(R.string.disconnected);
+                btnConnect.setEnabled(true);
+                btnRefresh.setVisibility(View.GONE);
+                showProgress(false);
+                break;
+            case ERROR:
+                btnConnect.setEnabled(true);
+                showProgress(false);
+                break;
+            case CONNECTING:
+                btnConnect.setEnabled(false);
+                break;
+            case CONNECTED:
+                btnConnect.setEnabled(false);
+                btnRefresh.setVisibility(View.VISIBLE);
+                showProgress(false);
+                break;
+            case READING:
+                break;
+        }
+    }
+
+    // --- UI helpers ---
+
+    private void showProgress(boolean visible) {
+        progressBar.setVisibility(visible ? View.VISIBLE : View.GONE);
+    }
+
+    private void showError(String title, String detail) {
+        tvStatus.setText(title);
+        if (detail != null && !detail.isEmpty()) {
+            tvErrorDetail.setText(detail);
+            tvErrorDetail.setVisibility(View.VISIBLE);
+        }
+    }
+
+    private void hideError() {
+        tvErrorDetail.setVisibility(View.GONE);
+    }
+
     private String formatVersion(String version, String build) {
         if (version == null) return null;
         if (build != null) return version + " (" + build + ")";
@@ -269,21 +366,21 @@ public class MainActivity extends AppCompatActivity {
         tv.setText(value != null && !value.isEmpty() ? value : "--");
     }
 
-    private void showStatus(String message, boolean connected) {
-        tvStatus.setText(message);
-        btnConnect.setEnabled(!connected);
+    private void postToMain(Runnable action) {
+        if (!isDestroyed) mainHandler.post(action);
     }
 
-    private void onDeviceDisconnected() {
-        if (muxConnection != null) {
-            muxConnection.close();
-        }
-        lockdowndClient = null;
+    // --- Lifecycle ---
 
-        showStatus(getString(R.string.disconnected), false);
+    private void onDeviceDisconnected() {
+        if (muxConnection != null) muxConnection.close();
+        lockdowndClient = null;
+        transitionTo(ConnectionState.DISCONNECTED);
+
         tvConnectionInfo.setText(R.string.no_device);
-        btnRefresh.setVisibility(View.GONE);
+        btnShare.setVisibility(View.GONE);
         deviceInfoContainer.setVisibility(View.GONE);
+        hideError();
     }
 
     @Override
@@ -299,11 +396,10 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onDestroy() {
         isDestroyed = true;
+        mainHandler.removeCallbacksAndMessages(null);
         super.onDestroy();
         unregisterReceiver(usbReceiver);
-        if (muxConnection != null) {
-            muxConnection.close();
-        }
+        if (muxConnection != null) muxConnection.close();
         executor.shutdown();
         try {
             if (!executor.awaitTermination(2, TimeUnit.SECONDS)) {
