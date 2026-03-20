@@ -2,6 +2,7 @@ package com.androidusb.iosreader.protocol;
 
 import org.junit.Test;
 
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -58,6 +59,32 @@ public class PlistBuilderTest {
         assertTrue(xml.contains("&lt;Device&gt;"));
         assertTrue(xml.contains("&amp;"));
         assertTrue(xml.contains("&quot;More&quot;"));
+    }
+
+    @Test
+    public void testBuildWithArray() {
+        Map<String, Object> dict = new LinkedHashMap<>();
+        dict.put("Items", Arrays.asList("A", "B", "C"));
+
+        String xml = PlistBuilder.buildPlist(dict);
+        assertTrue(xml.contains("<array>"));
+        assertTrue(xml.contains("<string>A</string>"));
+        assertTrue(xml.contains("<string>B</string>"));
+        assertTrue(xml.contains("<string>C</string>"));
+        assertTrue(xml.contains("</array>"));
+    }
+
+    @Test
+    public void testBuildWithNestedDict() {
+        Map<String, Object> inner = new LinkedHashMap<>();
+        inner.put("Key", "Value");
+        Map<String, Object> dict = new LinkedHashMap<>();
+        dict.put("Nested", inner);
+
+        String xml = PlistBuilder.buildPlist(dict);
+        assertTrue(xml.contains("<key>Nested</key>"));
+        assertTrue(xml.contains("<key>Key</key>"));
+        assertTrue(xml.contains("<string>Value</string>"));
     }
 
     @Test

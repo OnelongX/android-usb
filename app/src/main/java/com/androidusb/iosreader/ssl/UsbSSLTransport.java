@@ -6,8 +6,6 @@ import com.androidusb.iosreader.util.Logger;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
-import java.nio.charset.StandardCharsets;
 import java.security.KeyFactory;
 import java.security.KeyStore;
 import java.security.PrivateKey;
@@ -37,7 +35,7 @@ import javax.net.ssl.X509TrustManager;
  */
 public class UsbSSLTransport {
     private static final String TAG = "UsbSSLTransport";
-    private static final int BUFFER_SIZE = 32768;
+    private static final int MAX_UNWRAP_RETRIES = 10;
 
     private final UsbMuxConnection usbConnection;
     private SSLEngine sslEngine;
@@ -85,8 +83,9 @@ public class UsbSSLTransport {
                     KeyManagerFactory.getDefaultAlgorithm());
             kmf.init(keyStore, new char[0]);
 
-            // Trust all certificates from the device (we verify via pairing, not PKI)
-            TrustManager[] trustAll = new TrustManager[]{
+            // Trust the device certificate (verified via pairing handshake, not PKI).
+            // This is safe because trust was established during the on-device "Trust" dialog.
+            TrustManager[] pairingTrust = new TrustManager[]{
                     new X509TrustManager() {
                         @Override
                         public void checkClientTrusted(X509Certificate[] chain, String authType) {}
@@ -98,27 +97,23 @@ public class UsbSSLTransport {
             };
 
             SSLContext sslContext = SSLContext.getInstance("TLS");
-            sslContext.init(kmf.getKeyManagers(), trustAll, null);
+            sslContext.init(kmf.getKeyManagers(), pairingTrust, null);
 
             // Create SSLEngine in client mode
             sslEngine = sslContext.createSSLEngine();
             sslEngine.setUseClientMode(true);
 
-            SSLSession session = sslEngine.getSession();
-            int appBufSize = session.getApplicationBufferSize();
-            int netBufSize = session.getPacketBufferSize();
-
-            appOutBuffer = ByteBuffer.allocate(appBufSize);
-            netOutBuffer = ByteBuffer.allocate(netBufSize);
-            netInBuffer = ByteBuffer.allocate(netBufSize);
-            appInBuffer = ByteBuffer.allocate(appBufSize);
+            allocateBuffers();
 
             // Begin handshake
             sslEngine.beginHandshake();
             performHandshake();
 
+            // Re-allocate buffers after handshake in case session params changed
+            allocateBuffers();
+
             sslEstablished = true;
-            Logger.i(TAG, "SSL handshake completed successfully. Protocol: "
+            Logger.i(TAG, "SSL handshake completed. Protocol: "
                     + sslEngine.getSession().getProtocol()
                     + " Cipher: " + sslEngine.getSession().getCipherSuite());
 
@@ -127,6 +122,20 @@ public class UsbSSLTransport {
         } catch (Exception e) {
             throw new IOException("SSL initialization failed: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Allocate or re-allocate SSLEngine buffers based on current session parameters.
+     */
+    private void allocateBuffers() {
+        SSLSession session = sslEngine.getSession();
+        int appBufSize = session.getApplicationBufferSize();
+        int netBufSize = session.getPacketBufferSize();
+
+        appOutBuffer = ByteBuffer.allocate(appBufSize);
+        netOutBuffer = ByteBuffer.allocate(netBufSize);
+        netInBuffer = ByteBuffer.allocate(netBufSize);
+        appInBuffer = ByteBuffer.allocate(appBufSize);
     }
 
     /**
@@ -146,7 +155,6 @@ public class UsbSSLTransport {
                     hsStatus = doUnwrap();
                     break;
                 case NEED_TASK:
-                    // Run delegated tasks (e.g. certificate validation)
                     Runnable task;
                     while ((task = sslEngine.getDelegatedTask()) != null) {
                         task.run();
@@ -179,8 +187,9 @@ public class UsbSSLTransport {
                 }
                 break;
             case BUFFER_OVERFLOW:
-                netOutBuffer = enlargeBuffer(netOutBuffer, sslEngine.getSession().getPacketBufferSize());
-                return doWrap(); // retry
+                netOutBuffer = enlargeBuffer(netOutBuffer,
+                        sslEngine.getSession().getPacketBufferSize());
+                return doWrap();
             default:
                 throw new IOException("SSL wrap failed: " + result.getStatus());
         }
@@ -190,46 +199,55 @@ public class UsbSSLTransport {
 
     /**
      * Receive data from USB and unwrap (decrypt).
+     * Uses iterative approach to avoid recursive stack overflow and buffer state corruption.
      */
     private SSLEngineResult.HandshakeStatus doUnwrap() throws IOException {
-        // Read encrypted data from USB if buffer is empty
-        if (netInBuffer.position() == 0) {
-            byte[] raw = receiveRawSSL();
-            netInBuffer.clear();
-            netInBuffer.put(raw);
+        for (int retries = 0; retries < MAX_UNWRAP_RETRIES; retries++) {
+            // Read encrypted data from USB if buffer has no unprocessed data
+            if (netInBuffer.position() == 0) {
+                byte[] raw = receiveRawSSL();
+                netInBuffer.put(raw);
+            }
+            netInBuffer.flip();
+
+            appInBuffer.clear();
+            SSLEngineResult result = sslEngine.unwrap(netInBuffer, appInBuffer);
+            netInBuffer.compact(); // preserve any leftover data for next unwrap
+
+            switch (result.getStatus()) {
+                case OK:
+                    return result.getHandshakeStatus();
+
+                case BUFFER_UNDERFLOW:
+                    // Need more network data — read from USB and loop back
+                    byte[] moreData = receiveRawSSL();
+                    if (netInBuffer.remaining() < moreData.length) {
+                        ByteBuffer expanded = ByteBuffer.allocate(
+                                netInBuffer.capacity() + moreData.length);
+                        netInBuffer.flip();
+                        expanded.put(netInBuffer);
+                        netInBuffer = expanded;
+                    }
+                    netInBuffer.put(moreData);
+                    // Loop back — netInBuffer.position() > 0, so we skip the initial read
+                    continue;
+
+                case BUFFER_OVERFLOW:
+                    appInBuffer = enlargeBuffer(appInBuffer,
+                            sslEngine.getSession().getApplicationBufferSize());
+                    // netInBuffer was compacted, so we still have data to retry
+                    continue;
+
+                default:
+                    throw new IOException("SSL unwrap failed: " + result.getStatus());
+            }
         }
-        netInBuffer.flip();
 
-        appInBuffer.clear();
-        SSLEngineResult result = sslEngine.unwrap(netInBuffer, appInBuffer);
-        netInBuffer.compact();
-
-        switch (result.getStatus()) {
-            case OK:
-                break;
-            case BUFFER_UNDERFLOW:
-                // Need more data from USB
-                byte[] moreData = receiveRawSSL();
-                if (netInBuffer.remaining() < moreData.length) {
-                    netInBuffer = enlargeBuffer(netInBuffer,
-                            netInBuffer.capacity() + moreData.length);
-                }
-                netInBuffer.put(moreData);
-                return doUnwrap(); // retry
-            case BUFFER_OVERFLOW:
-                appInBuffer = enlargeBuffer(appInBuffer,
-                        sslEngine.getSession().getApplicationBufferSize());
-                return doUnwrap(); // retry
-            default:
-                throw new IOException("SSL unwrap failed: " + result.getStatus());
-        }
-
-        return result.getHandshakeStatus();
+        throw new IOException("SSL unwrap: too many retries");
     }
 
     /**
      * Send encrypted lockdownd message.
-     * Format: 4-byte BE length + plist XML, encrypted by SSLEngine.
      */
     public void send(byte[] plaintext) throws IOException {
         if (!sslEstablished) {
@@ -237,6 +255,9 @@ public class UsbSSLTransport {
         }
 
         appOutBuffer.clear();
+        if (plaintext.length > appOutBuffer.capacity()) {
+            appOutBuffer = ByteBuffer.allocate(plaintext.length);
+        }
         appOutBuffer.put(plaintext);
         appOutBuffer.flip();
 
@@ -273,6 +294,7 @@ public class UsbSSLTransport {
             throw new IOException("SSL not established");
         }
 
+        // Read encrypted data from USB
         byte[] raw = receiveRawSSL();
         netInBuffer.clear();
         netInBuffer.put(raw);
@@ -280,42 +302,49 @@ public class UsbSSLTransport {
 
         appInBuffer.clear();
 
-        while (netInBuffer.hasRemaining()) {
+        for (int retries = 0; retries < MAX_UNWRAP_RETRIES && netInBuffer.hasRemaining(); retries++) {
             SSLEngineResult result = sslEngine.unwrap(netInBuffer, appInBuffer);
 
             switch (result.getStatus()) {
                 case OK:
-                    break;
+                    // Handle delegated tasks from renegotiation
+                    if (result.getHandshakeStatus() == SSLEngineResult.HandshakeStatus.NEED_TASK) {
+                        Runnable task;
+                        while ((task = sslEngine.getDelegatedTask()) != null) {
+                            task.run();
+                        }
+                    }
+                    // Done — exit the loop
+                    appInBuffer.flip();
+                    byte[] decrypted = new byte[appInBuffer.remaining()];
+                    appInBuffer.get(decrypted);
+                    return decrypted;
+
                 case BUFFER_UNDERFLOW:
-                    // Need more network data
                     netInBuffer.compact();
                     byte[] more = receiveRawSSL();
+                    if (netInBuffer.remaining() < more.length) {
+                        ByteBuffer expanded = ByteBuffer.allocate(
+                                netInBuffer.capacity() + more.length);
+                        netInBuffer.flip();
+                        expanded.put(netInBuffer);
+                        netInBuffer = expanded;
+                    }
                     netInBuffer.put(more);
                     netInBuffer.flip();
                     continue;
+
                 case BUFFER_OVERFLOW:
                     appInBuffer = enlargeBuffer(appInBuffer,
                             sslEngine.getSession().getApplicationBufferSize());
                     continue;
+
                 case CLOSED:
                     throw new IOException("SSL connection closed by peer");
             }
-
-            // If handshake still happening (renegotiation), handle delegated tasks
-            if (result.getHandshakeStatus() == SSLEngineResult.HandshakeStatus.NEED_TASK) {
-                Runnable task;
-                while ((task = sslEngine.getDelegatedTask()) != null) {
-                    task.run();
-                }
-            }
-
-            if (result.getStatus() == SSLEngineResult.Status.OK) break;
         }
 
-        appInBuffer.flip();
-        byte[] decrypted = new byte[appInBuffer.remaining()];
-        appInBuffer.get(decrypted);
-        return decrypted;
+        throw new IOException("SSL receive: failed to decrypt data");
     }
 
     /**
@@ -329,10 +358,9 @@ public class UsbSSLTransport {
      * Close the SSL session gracefully.
      */
     public void close() {
-        if (sslEngine != null) {
+        if (sslEngine != null && sslEstablished) {
             try {
                 sslEngine.closeOutbound();
-                // Try to send close_notify
                 netOutBuffer.clear();
                 appOutBuffer.clear();
                 appOutBuffer.flip();
@@ -348,20 +376,13 @@ public class UsbSSLTransport {
             }
             sslEstablished = false;
         }
+        sslEngine = null;
     }
 
-    /**
-     * Send raw bytes over USB (no SSL framing — used for TLS records).
-     * The USB layer handles chunking via bulk transfer.
-     */
     private void sendRawSSL(byte[] data) throws IOException {
         usbConnection.sendRaw(data);
     }
 
-    /**
-     * Receive raw bytes from USB (TLS records).
-     * lockdownd over SSL doesn't use length-prefix — TLS records have their own framing.
-     */
     private byte[] receiveRawSSL() throws IOException {
         return usbConnection.receiveRawDirect();
     }

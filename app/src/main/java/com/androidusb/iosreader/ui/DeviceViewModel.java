@@ -18,6 +18,7 @@ import com.androidusb.iosreader.util.Logger;
 import com.androidusb.iosreader.util.RetryHelper;
 
 import java.io.IOException;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -159,8 +160,7 @@ public class DeviceViewModel extends ViewModel {
             byte[] devicePublicKey = client.getDevicePublicKey();
 
             // Get UDID for pair record lookup
-            Map_String_Object allVals = getBasicDeviceValue(client);
-            String udid = allVals != null ? (String) allVals.get("UniqueDeviceID") : null;
+            String udid = getDeviceUDID(client);
 
             if (udid == null) {
                 Logger.w(TAG, "Cannot determine UDID, skipping SSL");
@@ -256,17 +256,14 @@ public class DeviceViewModel extends ViewModel {
     }
 
     /**
-     * Quick helper to get basic values (UDID) without SSL.
+     * Get device UDID via plaintext lockdownd query.
      */
-    @SuppressWarnings("unchecked")
-    private Map_String_Object getBasicDeviceValue(LockdowndClient client) {
+    private String getDeviceUDID(LockdowndClient client) {
         try {
-            java.util.Map<String, Object> resp = client.getValue(null, "UniqueDeviceID");
+            Map<String, Object> resp = client.getValue(null, "UniqueDeviceID");
             Object value = resp.get("Value");
             if (value instanceof String) {
-                java.util.Map<String, Object> map = new java.util.HashMap<>();
-                map.put("UniqueDeviceID", value);
-                return new Map_String_Object(map);
+                return (String) value;
             }
         } catch (IOException e) {
             Logger.w(TAG, "Failed to get UDID: " + e.getMessage());
@@ -353,12 +350,4 @@ public class DeviceViewModel extends ViewModel {
         }
     }
 
-    /**
-     * Simple wrapper to work around type erasure issues with generics in inner classes.
-     */
-    private static class Map_String_Object {
-        private final java.util.Map<String, Object> map;
-        Map_String_Object(java.util.Map<String, Object> map) { this.map = map; }
-        Object get(String key) { return map.get(key); }
-    }
 }

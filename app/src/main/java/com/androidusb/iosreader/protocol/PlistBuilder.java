@@ -1,5 +1,6 @@
 package com.androidusb.iosreader.protocol;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -50,6 +51,12 @@ public class PlistBuilder {
                 appendValue(sb, e.getValue());
             }
             sb.append("\t</dict>\n");
+        } else if (value instanceof List) {
+            sb.append("\t<array>\n");
+            for (Object item : (List<?>) value) {
+                appendValue(sb, item);
+            }
+            sb.append("\t</array>\n");
         }
     }
 

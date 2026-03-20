@@ -249,8 +249,11 @@ public class UsbMuxConnection {
     public byte[] receiveRaw() throws IOException {
         // First read to get the header (at least 4 bytes for the length field)
         int received = connection.bulkTransfer(endpointIn, receiveBuffer, receiveBuffer.length, USB_TIMEOUT_MS);
+        if (received < 0) {
+            throw new IOException("USB bulk IN transfer failed (error code " + received + ")");
+        }
         if (received < 4) {
-            throw new IOException("Failed to receive response header (got " + received + " bytes)");
+            throw new IOException("Incomplete response header (got " + received + " bytes, need 4)");
         }
 
         // Parse expected total length from first 4 bytes (LE)
