@@ -9,8 +9,6 @@ import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
 import android.view.View;
 import android.widget.Button;
 import android.widget.LinearLayout;
@@ -124,7 +122,7 @@ public class MainActivity extends AppCompatActivity {
         tvPhoneNumber = findViewById(R.id.tvPhoneNumber);
         tvStorage = findViewById(R.id.tvStorage);
 
-        btnConnect.setOnClickListener(v -> checkForDevice());
+        btnConnect.setOnClickListener(v -> onConnectClicked());
         btnRefresh.setOnClickListener(v -> viewModel.readDeviceInfo());
         btnShare.setOnClickListener(v -> {
             iOSDeviceInfo info = viewModel.getDeviceInfo().getValue();
@@ -132,10 +130,19 @@ public class MainActivity extends AppCompatActivity {
         });
     }
 
+    private void onConnectClicked() {
+        ConnectionState state = viewModel.getConnectionState().getValue();
+        if (state == ConnectionState.ERROR && !viewModel.isConnectionHealthy()) {
+            // Reconnect after a failure
+            viewModel.reconnect();
+        } else {
+            checkForDevice();
+        }
+    }
+
     private void observeViewModel() {
         viewModel.getConnectionState().observe(this, this::onStateChanged);
         viewModel.getDeviceInfo().observe(this, this::displayDeviceInfo);
-        viewModel.getStatusText().observe(this, tvStatus::setText);
         viewModel.getErrorDetail().observe(this, detail -> {
             if (detail != null && !detail.isEmpty()) {
                 tvErrorDetail.setText(detail);
@@ -147,10 +154,13 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void onStateChanged(ConnectionState newState) {
+        // Update status text based on state
         switch (newState) {
             case IDLE:
             case DISCONNECTED:
+                tvStatus.setText(R.string.disconnected);
                 btnConnect.setEnabled(true);
+                btnConnect.setText(R.string.btn_connect);
                 btnRefresh.setVisibility(View.GONE);
                 btnShare.setVisibility(View.GONE);
                 deviceInfoContainer.setVisibility(View.GONE);
@@ -158,19 +168,24 @@ public class MainActivity extends AppCompatActivity {
                 tvConnectionInfo.setText(R.string.no_device);
                 break;
             case CONNECTING:
+                tvStatus.setText(R.string.connecting);
                 btnConnect.setEnabled(false);
                 showProgress(true);
                 break;
             case CONNECTED:
+                tvStatus.setText(R.string.connected);
                 btnConnect.setEnabled(false);
                 btnRefresh.setVisibility(View.VISIBLE);
                 showProgress(false);
                 break;
             case READING:
+                tvStatus.setText(R.string.reading_info);
                 showProgress(true);
                 break;
             case ERROR:
+                tvStatus.setText(R.string.connection_failed);
                 btnConnect.setEnabled(true);
+                btnConnect.setText(R.string.btn_reconnect);
                 showProgress(false);
                 break;
         }

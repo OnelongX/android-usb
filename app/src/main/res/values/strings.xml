@@ -21,6 +21,7 @@
     <string name="btn_connect">连接设备</string>
     <string name="btn_refresh">刷新信息</string>
     <string name="btn_share">分享</string>
+    <string name="btn_reconnect">重新连接</string>
 
     <!-- Device info labels -->
     <string name="device_info_title">设备信息</string>

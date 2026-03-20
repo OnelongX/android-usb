@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">iOS Device Reader</string>
+
+    <!-- Connection status -->
+    <string name="no_device">No iOS device detected</string>
+    <string name="connecting">Connecting…</string>
+    <string name="connected">Connected</string>
+    <string name="disconnected">Disconnected</string>
+    <string name="reading_info">Reading device info…</string>
+    <string name="retry_connecting">Retrying connection (%1$d/%2$d)…</string>
+    <string name="connection_failed">Connection failed</string>
+    <string name="device_found">Device found: %s</string>
+    <string name="requesting_usb_permission">Requesting USB permission…</string>
+    <string name="usb_permission_denied">USB permission denied</string>
+    <string name="usb_permission_hint">Please allow USB access to connect to iOS device</string>
+    <string name="read_info_failed">Failed to read info</string>
+    <string name="lockdownd_validation_failed">lockdownd validation failed: device may not be supported or needs to trust this device</string>
+
+    <!-- Buttons -->
+    <string name="btn_connect">Connect</string>
+    <string name="btn_refresh">Refresh</string>
+    <string name="btn_share">Share</string>
+    <string name="btn_reconnect">Reconnect</string>
+
+    <!-- Device info labels -->
+    <string name="device_info_title">Device Info</string>
+    <string name="device_name">Device Name</string>
+    <string name="device_model">Model</string>
+    <string name="ios_version">iOS Version</string>
+    <string name="serial_number">Serial Number</string>
+    <string name="udid">UDID</string>
+    <string name="wifi_mac">WiFi MAC</string>
+    <string name="bluetooth_mac">Bluetooth MAC</string>
+    <string name="battery_level">Battery Level</string>
+    <string name="battery_charging">Charging</string>
+    <string name="storage_info">Storage</string>
+    <string name="phone_number">Phone Number</string>
+    <string name="imei">IMEI</string>
+    <string name="cpu_arch">CPU Architecture</string>
+    <string name="hardware_model">Hardware Model</string>
+    <string name="unknown_device">Unknown Device</string>
+</resources>

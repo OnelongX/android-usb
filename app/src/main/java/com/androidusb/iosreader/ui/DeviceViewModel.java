@@ -22,13 +22,16 @@ import java.util.concurrent.TimeUnit;
 /**
  * ViewModel that manages iOS device connection state and device info.
  * Survives configuration changes (rotation) and owns the USB connection lifecycle.
+ * Supports auto-reconnection on transient USB failures.
  */
 public class DeviceViewModel extends ViewModel {
     private static final String TAG = "DeviceViewModel";
     private static final int MAX_CONNECT_RETRIES = 3;
+    private static final int MAX_READ_RETRIES = 2;
 
     private UsbMuxConnection muxConnection;
     private volatile LockdowndClient lockdowndClient;
+    private volatile boolean cleared = false;
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
 
     private final MutableLiveData<ConnectionState> connectionState = new MutableLiveData<>(ConnectionState.IDLE);
@@ -60,7 +63,6 @@ public class DeviceViewModel extends ViewModel {
 
     public void setIdle() {
         connectionState.setValue(ConnectionState.IDLE);
-        statusText.setValue("已断开");
         errorDetail.setValue(null);
     }
 
@@ -71,6 +73,13 @@ public class DeviceViewModel extends ViewModel {
     }
 
     /**
+     * Check if the USB connection is still alive by verifying the underlying connection.
+     */
+    public boolean isConnectionHealthy() {
+        return muxConnection != null && muxConnection.isConnected() && lockdowndClient != null;
+    }
+
+    /**
      * Connect to the iOS device with retry logic.
      */
     public void connect() {
@@ -78,15 +87,13 @@ public class DeviceViewModel extends ViewModel {
         if (current != null && current.isActive()) return;
 
         connectionState.setValue(ConnectionState.CONNECTING);
-        statusText.setValue("正在连接...");
         errorDetail.setValue(null);
 
         executor.execute(() -> {
+            if (cleared) return;
             try {
                 RetryHelper.execute(MAX_CONNECT_RETRIES, attempt -> {
-                    if (attempt > 1) {
-                        statusText.postValue("正在重试连接 (" + attempt + "/" + MAX_CONNECT_RETRIES + ")...");
-                    }
+                    if (cleared) throw new IOException("ViewModel cleared");
 
                     muxConnection.open();
                     try {
@@ -101,12 +108,11 @@ public class DeviceViewModel extends ViewModel {
                 LockdowndClient client = new LockdowndClient(muxConnection);
                 if (!client.queryType()) {
                     muxConnection.close();
-                    throw new IOException("lockdownd 验证失败：设备可能需要信任此设备");
+                    throw new IOException("lockdownd validation failed: device may need to trust this device");
                 }
 
                 lockdowndClient = client;
                 connectionState.postValue(ConnectionState.CONNECTED);
-                statusText.postValue("已连接");
 
                 // Auto-read device info on first connect
                 readDeviceInfoInternal();
@@ -115,7 +121,6 @@ public class DeviceViewModel extends ViewModel {
                 Logger.e(TAG, "Connection failed", e);
                 muxConnection.close();
                 connectionState.postValue(ConnectionState.ERROR);
-                statusText.postValue("连接失败");
                 errorDetail.postValue(e.getMessage());
             }
         });
@@ -129,7 +134,6 @@ public class DeviceViewModel extends ViewModel {
         if (current != ConnectionState.CONNECTED || lockdowndClient == null) return;
 
         connectionState.setValue(ConnectionState.READING);
-        statusText.setValue("正在读取设备信息...");
         errorDetail.setValue(null);
 
         executor.execute(this::readDeviceInfoInternal);
@@ -137,23 +141,42 @@ public class DeviceViewModel extends ViewModel {
 
     private void readDeviceInfoInternal() {
         LockdowndClient client = lockdowndClient;
-        if (client == null) return;
+        if (client == null || cleared) return;
 
         try {
             connectionState.postValue(ConnectionState.READING);
-            statusText.postValue("正在读取设备信息...");
 
-            iOSDeviceInfo info = client.getDeviceInfo();
+            // Retry reads to handle transient USB transfer failures
+            iOSDeviceInfo info = RetryHelper.execute(MAX_READ_RETRIES, attempt -> {
+                if (cleared) throw new IOException("ViewModel cleared");
+                return client.getDeviceInfo();
+            });
+
             deviceInfo.postValue(info);
             connectionState.postValue(ConnectionState.CONNECTED);
-            statusText.postValue("已连接");
 
         } catch (IOException e) {
             Logger.e(TAG, "Failed to read device info", e);
-            connectionState.postValue(ConnectionState.CONNECTED);
-            statusText.postValue("读取信息失败");
-            errorDetail.postValue(e.getMessage());
+
+            // If the USB connection died, transition to error for reconnection
+            if (!muxConnection.isConnected()) {
+                lockdowndClient = null;
+                connectionState.postValue(ConnectionState.ERROR);
+                errorDetail.postValue("USB connection lost: " + e.getMessage());
+            } else {
+                connectionState.postValue(ConnectionState.CONNECTED);
+                errorDetail.postValue(e.getMessage());
+            }
         }
+    }
+
+    /**
+     * Reconnect after a connection loss. Closes existing connection first.
+     */
+    public void reconnect() {
+        lockdowndClient = null;
+        if (muxConnection != null) muxConnection.close();
+        connect();
     }
 
     /**
@@ -163,7 +186,6 @@ public class DeviceViewModel extends ViewModel {
         lockdowndClient = null;
         if (muxConnection != null) muxConnection.close();
         connectionState.postValue(ConnectionState.DISCONNECTED);
-        statusText.postValue("已断开");
         errorDetail.postValue(null);
         deviceInfo.postValue(null);
     }
@@ -171,6 +193,7 @@ public class DeviceViewModel extends ViewModel {
     @Override
     protected void onCleared() {
         super.onCleared();
+        cleared = true;
         lockdowndClient = null;
         if (muxConnection != null) muxConnection.close();
         executor.shutdown();

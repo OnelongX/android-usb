@@ -73,12 +73,14 @@ public class iOSDeviceInfo {
     public String getHardwareModel() { return hardwareModel; }
     public void setHardwareModel(String hardwareModel) { this.hardwareModel = hardwareModel; }
 
+    private static final double BYTES_PER_GB = 1024.0 * 1024.0 * 1024.0;
+
     public String getFormattedStorage() {
-        if (totalDiskCapacity <= 0) return "未知";
-        double totalGB = totalDiskCapacity / (1024.0 * 1024.0 * 1024.0);
-        double availGB = availableDiskCapacity / (1024.0 * 1024.0 * 1024.0);
+        if (totalDiskCapacity <= 0) return null;
+        double totalGB = totalDiskCapacity / BYTES_PER_GB;
+        double availGB = availableDiskCapacity / BYTES_PER_GB;
         double usedGB = totalGB - availGB;
-        return String.format("%.1f GB / %.1f GB (可用 %.1f GB)", usedGB, totalGB, availGB);
+        return String.format("%.1f / %.1f GB (%.1f GB free)", usedGB, totalGB, availGB);
     }
 
     public String getDisplayModel() {
