@@ -4,11 +4,14 @@ import android.util.Log;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.parsers.ParserConfigurationException;
 
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
@@ -21,19 +24,30 @@ import org.w3c.dom.NodeList;
 public class PlistParser {
     private static final String TAG = "PlistParser";
 
+    // Cache the factory to avoid re-creating it on every parse
+    private static final DocumentBuilderFactory FACTORY;
+
+    static {
+        FACTORY = DocumentBuilderFactory.newInstance();
+        try {
+            // Apple plists use DOCTYPE declaration, so we cannot disallow it entirely.
+            // Instead, disable all external entity resolution to prevent XXE.
+            FACTORY.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            FACTORY.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            FACTORY.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+            FACTORY.setExpandEntityReferences(false);
+            FACTORY.setXIncludeAware(false);
+        } catch (ParserConfigurationException e) {
+            Log.e(TAG, "Failed to configure XML parser security features", e);
+        }
+    }
+
     /**
      * Parse an XML plist string into a Map.
      */
     public static Map<String, Object> parse(String xml) throws IOException {
         try {
-            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-            // Disable external entities to prevent XXE attacks
-            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", false);
-            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
-            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
-            factory.setExpandEntityReferences(false);
-
-            DocumentBuilder builder = factory.newDocumentBuilder();
+            DocumentBuilder builder = FACTORY.newDocumentBuilder();
             Document doc = builder.parse(new ByteArrayInputStream(xml.getBytes("UTF-8")));
 
             Element plist = doc.getDocumentElement();
@@ -82,14 +96,16 @@ public class PlistParser {
                 return elem.getTextContent();
             case "integer":
                 try {
-                    return Long.parseLong(elem.getTextContent());
+                    return Long.parseLong(elem.getTextContent().trim());
                 } catch (NumberFormatException e) {
+                    Log.w(TAG, "Malformed integer value: " + elem.getTextContent());
                     return 0L;
                 }
             case "real":
                 try {
-                    return Double.parseDouble(elem.getTextContent());
+                    return Double.parseDouble(elem.getTextContent().trim());
                 } catch (NumberFormatException e) {
+                    Log.w(TAG, "Malformed real value: " + elem.getTextContent());
                     return 0.0;
                 }
             case "true":
@@ -103,19 +119,24 @@ public class PlistParser {
                     return android.util.Base64.decode(elem.getTextContent().trim(),
                             android.util.Base64.DEFAULT);
                 } catch (Exception e) {
+                    Log.w(TAG, "Failed to decode base64 data", e);
                     return new byte[0];
                 }
             case "array":
-                // Simplified: return first element or empty string
-                NodeList items = elem.getChildNodes();
-                for (int i = 0; i < items.getLength(); i++) {
-                    if (items.item(i).getNodeType() == Node.ELEMENT_NODE) {
-                        return parseValue((Element) items.item(i));
-                    }
-                }
-                return "";
+                return parseArray(elem);
             default:
                 return elem.getTextContent();
         }
+    }
+
+    private static List<Object> parseArray(Element arrayElement) {
+        List<Object> result = new ArrayList<>();
+        NodeList items = arrayElement.getChildNodes();
+        for (int i = 0; i < items.getLength(); i++) {
+            if (items.item(i).getNodeType() == Node.ELEMENT_NODE) {
+                result.add(parseValue((Element) items.item(i)));
+            }
+        }
+        return result;
     }
 }

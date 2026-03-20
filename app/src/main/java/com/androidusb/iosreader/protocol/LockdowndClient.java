@@ -25,6 +25,7 @@ import java.util.Map;
  */
 public class LockdowndClient {
     private static final String TAG = "LockdowndClient";
+    private static final String CLIENT_LABEL = "android-usb-reader";
 
     private final UsbMuxConnection usbConnection;
 
@@ -38,11 +39,11 @@ public class LockdowndClient {
      */
     public boolean queryType() throws IOException {
         Map<String, Object> request = new LinkedHashMap<>();
-        request.put("Label", "android-usb-reader");
+        request.put("Label", CLIENT_LABEL);
         request.put("Request", "QueryType");
 
         Map<String, Object> response = sendAndReceive(request);
-        String type = (String) response.get("Type");
+        Object type = response.get("Type");
         Log.i(TAG, "QueryType response: " + type);
         return "com.apple.mobile.lockdown".equals(type);
     }
@@ -55,12 +56,9 @@ public class LockdowndClient {
 
         // Get all values (no domain, no key = return everything)
         Map<String, Object> allValues = getValue(null, null);
+        Map<String, Object> value = extractValueDict(allValues);
 
-        if (allValues != null) {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> value = (Map<String, Object>) allValues.get("Value");
-            if (value == null) value = allValues;
-
+        if (value != null) {
             info.setDeviceName(getStr(value, "DeviceName"));
             info.setModelNumber(getStr(value, "ModelNumber"));
             info.setProductType(getStr(value, "ProductType"));
@@ -78,38 +76,25 @@ public class LockdowndClient {
 
         // Get battery info from a specific domain
         try {
-            Map<String, Object> batteryResult = getValue("com.apple.mobile.battery", null);
-            if (batteryResult != null) {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> bv = (Map<String, Object>) batteryResult.get("Value");
-                if (bv == null) bv = batteryResult;
-
-                Object level = bv.get("BatteryCurrentCapacity");
-                if (level instanceof Long) info.setBatteryLevel(((Long) level).intValue());
-
+            Map<String, Object> bv = extractValueDict(getValue("com.apple.mobile.battery", null));
+            if (bv != null) {
+                info.setBatteryLevel(getInt(bv, "BatteryCurrentCapacity"));
                 Object charging = bv.get("BatteryIsCharging");
                 if (charging instanceof Boolean) info.setBatteryCharging((Boolean) charging);
             }
         } catch (IOException e) {
-            Log.w(TAG, "Failed to get battery info", e);
+            Log.w(TAG, "Failed to get battery info: " + e.getMessage());
         }
 
         // Get disk usage info
         try {
-            Map<String, Object> diskResult = getValue("com.apple.disk_usage", null);
-            if (diskResult != null) {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> dv = (Map<String, Object>) diskResult.get("Value");
-                if (dv == null) dv = diskResult;
-
-                Object total = dv.get("TotalDiskCapacity");
-                if (total instanceof Long) info.setTotalDiskCapacity((Long) total);
-
-                Object avail = dv.get("AmountDataAvailable");
-                if (avail instanceof Long) info.setAvailableDiskCapacity((Long) avail);
+            Map<String, Object> dv = extractValueDict(getValue("com.apple.disk_usage", null));
+            if (dv != null) {
+                info.setTotalDiskCapacity(getLong(dv, "TotalDiskCapacity"));
+                info.setAvailableDiskCapacity(getLong(dv, "AmountDataAvailable"));
             }
         } catch (IOException e) {
-            Log.w(TAG, "Failed to get disk info", e);
+            Log.w(TAG, "Failed to get disk info: " + e.getMessage());
         }
 
         return info;
@@ -122,7 +107,7 @@ public class LockdowndClient {
      */
     public Map<String, Object> getValue(String domain, String key) throws IOException {
         Map<String, Object> request = new LinkedHashMap<>();
-        request.put("Label", "android-usb-reader");
+        request.put("Label", CLIENT_LABEL);
         request.put("Request", "GetValue");
         if (domain != null) request.put("Domain", domain);
         if (key != null) request.put("Key", key);
@@ -138,52 +123,76 @@ public class LockdowndClient {
         byte[] xmlBytes = xml.getBytes(StandardCharsets.UTF_8);
 
         // Send: 4-byte big-endian length prefix + XML payload
-        ByteBuffer lengthBuf = ByteBuffer.allocate(4);
-        lengthBuf.order(ByteOrder.BIG_ENDIAN);
-        lengthBuf.putInt(xmlBytes.length);
-
         byte[] packet = new byte[4 + xmlBytes.length];
-        System.arraycopy(lengthBuf.array(), 0, packet, 0, 4);
+        packet[0] = (byte) (xmlBytes.length >> 24);
+        packet[1] = (byte) (xmlBytes.length >> 16);
+        packet[2] = (byte) (xmlBytes.length >> 8);
+        packet[3] = (byte) xmlBytes.length;
         System.arraycopy(xmlBytes, 0, packet, 4, xmlBytes.length);
 
         Log.d(TAG, "Sending lockdownd request: " + request.get("Request"));
         usbConnection.sendRaw(packet);
 
-        // Receive: response also has 4-byte BE length prefix
+        // After usbmux connect, we're in raw TCP mode.
+        // lockdownd response: 4-byte BE length prefix + XML plist
         byte[] response = usbConnection.receiveRaw();
         if (response == null || response.length < 4) {
             throw new IOException("Empty lockdownd response");
         }
 
-        // The response from receiveRaw already includes the usbmux framing,
-        // but after connect, we're in raw TCP mode, so the first 4 bytes
-        // are the lockdownd plist length
         int plistLen = ByteBuffer.wrap(response, 0, 4).order(ByteOrder.BIG_ENDIAN).getInt();
-        if (plistLen <= 0 || plistLen > response.length - 4) {
-            // Try treating entire response as plist (in case framing differs)
-            String responseXml = new String(response, StandardCharsets.UTF_8);
-            if (responseXml.contains("<?xml")) {
-                return PlistParser.parse(responseXml);
+
+        String responseXml;
+        if (plistLen > 0 && plistLen <= response.length - 4) {
+            responseXml = new String(response, 4, plistLen, StandardCharsets.UTF_8);
+        } else {
+            // Fallback: try treating entire response as plist
+            responseXml = new String(response, StandardCharsets.UTF_8);
+            if (!responseXml.contains("<?xml") && !responseXml.contains("<plist")) {
+                throw new IOException("Invalid lockdownd response: no plist found (length field=" + plistLen + ")");
             }
-            throw new IOException("Invalid lockdownd response length: " + plistLen);
         }
 
-        String responseXml = new String(response, 4, plistLen, StandardCharsets.UTF_8);
-        Log.d(TAG, "Received lockdownd response (" + plistLen + " bytes)");
+        Log.d(TAG, "Received lockdownd response (" + responseXml.length() + " chars)");
 
         Map<String, Object> result = PlistParser.parse(responseXml);
 
-        // Check for errors
+        // Check for lockdownd errors and throw if critical
         String error = getStr(result, "Error");
         if (error != null && !error.isEmpty()) {
-            Log.w(TAG, "lockdownd error: " + error);
+            throw new IOException("lockdownd error: " + error);
         }
 
         return result;
     }
 
+    /**
+     * Extract the "Value" dict from a lockdownd response, falling back to the response itself.
+     */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> extractValueDict(Map<String, Object> response) {
+        if (response == null) return null;
+        Object value = response.get("Value");
+        if (value instanceof Map) return (Map<String, Object>) value;
+        return response;
+    }
+
     private static String getStr(Map<String, Object> map, String key) {
         Object val = map.get(key);
         return val instanceof String ? (String) val : null;
+    }
+
+    private static int getInt(Map<String, Object> map, String key) {
+        Object val = map.get(key);
+        if (val instanceof Long) return ((Long) val).intValue();
+        if (val instanceof Integer) return (Integer) val;
+        return 0;
+    }
+
+    private static long getLong(Map<String, Object> map, String key) {
+        Object val = map.get(key);
+        if (val instanceof Long) return (Long) val;
+        if (val instanceof Integer) return ((Integer) val).longValue();
+        return 0L;
     }
 }

@@ -27,6 +27,8 @@ import com.androidusb.iosreader.usb.UsbMuxConnection;
 import java.io.IOException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Main activity that handles USB device detection and displays iOS device info.
@@ -37,7 +39,9 @@ public class MainActivity extends AppCompatActivity {
 
     private UsbManager usbManager;
     private UsbMuxConnection muxConnection;
-    private LockdowndClient lockdowndClient;
+    private volatile LockdowndClient lockdowndClient;
+    private final AtomicBoolean isOperationInProgress = new AtomicBoolean(false);
+    private volatile boolean isDestroyed = false;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -89,7 +93,7 @@ public class MainActivity extends AppCompatActivity {
         // Check if launched by USB device attachment
         if (getIntent() != null) {
             UsbDevice device = getIntent().getParcelableExtra(UsbManager.EXTRA_DEVICE);
-            if (device != null) {
+            if (device != null && device.getVendorId() == 0x05AC) {
                 muxConnection.setDevice(device);
                 requestPermissionAndConnect(device);
                 return;
@@ -118,8 +122,18 @@ public class MainActivity extends AppCompatActivity {
         tvPhoneNumber = findViewById(R.id.tvPhoneNumber);
         tvStorage = findViewById(R.id.tvStorage);
 
-        btnConnect.setOnClickListener(v -> checkForDevice());
-        btnRefresh.setOnClickListener(v -> readDeviceInfo());
+        btnConnect.setOnClickListener(v -> {
+            if (isOperationInProgress.compareAndSet(false, true)) {
+                checkForDevice();
+                // Reset after brief delay to prevent rapid clicks
+                mainHandler.postDelayed(() -> isOperationInProgress.set(false), 1000);
+            }
+        });
+        btnRefresh.setOnClickListener(v -> {
+            if (isOperationInProgress.compareAndSet(false, true)) {
+                readDeviceInfo();
+            }
+        });
     }
 
     private void registerUsbReceiver() {
@@ -134,7 +148,8 @@ public class MainActivity extends AppCompatActivity {
         UsbDevice device = muxConnection.findAppleDevice();
         if (device != null) {
             showStatus("发现 Apple 设备", false);
-            tvConnectionInfo.setText("发现设备: " + device.getProductName());
+            String productName = device.getProductName();
+            tvConnectionInfo.setText("发现设备: " + (productName != null ? productName : "Apple Device"));
             requestPermissionAndConnect(device);
         } else {
             showStatus(getString(R.string.disconnected), false);
@@ -162,42 +177,63 @@ public class MainActivity extends AppCompatActivity {
             try {
                 muxConnection.open();
                 muxConnection.connectToLockdownd();
-                lockdowndClient = new LockdowndClient(muxConnection);
+                LockdowndClient client = new LockdowndClient(muxConnection);
 
-                boolean valid = lockdowndClient.queryType();
+                boolean valid = client.queryType();
                 if (!valid) {
+                    muxConnection.close();
                     throw new IOException("lockdownd QueryType failed");
                 }
 
-                mainHandler.post(() -> {
-                    showStatus(getString(R.string.connected), true);
-                    btnRefresh.setVisibility(View.VISIBLE);
-                    readDeviceInfo();
-                });
+                lockdowndClient = client;
+
+                if (!isDestroyed) {
+                    mainHandler.post(() -> {
+                        showStatus(getString(R.string.connected), true);
+                        btnRefresh.setVisibility(View.VISIBLE);
+                        readDeviceInfo();
+                    });
+                }
 
             } catch (IOException e) {
                 Log.e(TAG, "Connection failed", e);
-                mainHandler.post(() -> {
-                    showStatus("连接失败: " + e.getMessage(), false);
-                    btnConnect.setEnabled(true);
-                });
+                muxConnection.close();
+                if (!isDestroyed) {
+                    mainHandler.post(() -> {
+                        showStatus("连接失败: " + e.getMessage(), false);
+                        btnConnect.setEnabled(true);
+                    });
+                }
             }
         });
     }
 
     private void readDeviceInfo() {
+        final LockdowndClient client = lockdowndClient;
+        if (client == null) {
+            showStatus("未连接设备", false);
+            isOperationInProgress.set(false);
+            return;
+        }
+
         showStatus(getString(R.string.reading_info), true);
 
         executor.execute(() -> {
             try {
-                iOSDeviceInfo info = lockdowndClient.getDeviceInfo();
-                mainHandler.post(() -> displayDeviceInfo(info));
+                iOSDeviceInfo info = client.getDeviceInfo();
+                if (!isDestroyed) {
+                    mainHandler.post(() -> displayDeviceInfo(info));
+                }
             } catch (IOException e) {
                 Log.e(TAG, "Failed to read device info", e);
-                mainHandler.post(() -> {
-                    showStatus("读取信息失败: " + e.getMessage(), true);
-                    Toast.makeText(this, "读取失败，请重试", Toast.LENGTH_SHORT).show();
-                });
+                if (!isDestroyed) {
+                    mainHandler.post(() -> {
+                        showStatus("读取信息失败: " + e.getMessage(), true);
+                        Toast.makeText(this, "读取失败，请重试", Toast.LENGTH_SHORT).show();
+                    });
+                }
+            } finally {
+                isOperationInProgress.set(false);
             }
         });
     }
@@ -254,7 +290,7 @@ public class MainActivity extends AppCompatActivity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         UsbDevice device = intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
-        if (device != null) {
+        if (device != null && device.getVendorId() == 0x05AC) {
             muxConnection.setDevice(device);
             requestPermissionAndConnect(device);
         }
@@ -262,11 +298,20 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        isDestroyed = true;
         super.onDestroy();
         unregisterReceiver(usbReceiver);
         if (muxConnection != null) {
             muxConnection.close();
         }
         executor.shutdown();
+        try {
+            if (!executor.awaitTermination(2, TimeUnit.SECONDS)) {
+                executor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            executor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 }
