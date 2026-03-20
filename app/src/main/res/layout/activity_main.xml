@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#F5F5F5">
+
+    <!-- Toolbar -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:background="#1976D2"
+        android:gravity="center_vertical"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:orientation="horizontal">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/app_name"
+            android:textColor="#FFFFFF"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvStatus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/disconnected"
+            android:textColor="#B3FFFFFF"
+            android:textSize="14sp" />
+    </LinearLayout>
+
+    <!-- Connection status card -->
+    <LinearLayout
+        android:id="@+id/statusCard"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_margin="16dp"
+        android:background="@drawable/card_background"
+        android:orientation="vertical"
+        android:padding="20dp"
+        android:gravity="center">
+
+        <TextView
+            android:id="@+id/tvConnectionInfo"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/no_device"
+            android:textSize="16sp"
+            android:textColor="#666666" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:gravity="center"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btnConnect"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:text="@string/btn_connect"
+                android:textSize="14sp"
+                android:backgroundTint="#1976D2" />
+
+            <Button
+                android:id="@+id/btnRefresh"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:layout_marginStart="12dp"
+                android:text="@string/btn_refresh"
+                android:textSize="14sp"
+                android:backgroundTint="#FF6F00"
+                android:visibility="gone" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- Device info scroll area -->
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginBottom="16dp">
+
+        <LinearLayout
+            android:id="@+id/deviceInfoContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/card_background"
+            android:orientation="vertical"
+            android:padding="20dp"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="设备信息"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                android:textColor="#333333" />
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginTop="8dp"
+                android:layout_marginBottom="4dp"
+                android:background="#E0E0E0" />
+
+            <!-- Device Name -->
+            <TextView style="@style/InfoLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/device_name" />
+            <TextView android:id="@+id/tvDeviceName" style="@style/InfoValue" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--" />
+
+            <!-- Device Model -->
+            <TextView style="@style/InfoLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/device_model" />
+            <TextView android:id="@+id/tvDeviceModel" style="@style/InfoValue" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--" />
+
+            <!-- iOS Version -->
+            <TextView style="@style/InfoLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/ios_version" />
+            <TextView android:id="@+id/tvIOSVersion" style="@style/InfoValue" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--" />
+
+            <!-- Serial Number -->
+            <TextView style="@style/InfoLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/serial_number" />
+            <TextView android:id="@+id/tvSerialNumber" style="@style/InfoValue" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--" />
+
+            <!-- UDID -->
+            <TextView style="@style/InfoLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/udid" />
+            <TextView android:id="@+id/tvUDID" style="@style/InfoValue" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--" />
+
+            <!-- WiFi MAC -->
+            <TextView style="@style/InfoLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/wifi_mac" />
+            <TextView android:id="@+id/tvWifiMAC" style="@style/InfoValue" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--" />
+
+            <!-- Bluetooth MAC -->
+            <TextView style="@style/InfoLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/bluetooth_mac" />
+            <TextView android:id="@+id/tvBluetoothMAC" style="@style/InfoValue" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--" />
+
+            <!-- Battery -->
+            <TextView style="@style/InfoLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/battery_level" />
+            <TextView android:id="@+id/tvBattery" style="@style/InfoValue" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--" />
+
+            <!-- IMEI -->
+            <TextView style="@style/InfoLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/imei" />
+            <TextView android:id="@+id/tvIMEI" style="@style/InfoValue" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--" />
+
+            <!-- Phone Number -->
+            <TextView style="@style/InfoLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/phone_number" />
+            <TextView android:id="@+id/tvPhoneNumber" style="@style/InfoValue" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--" />
+
+            <!-- Storage -->
+            <TextView style="@style/InfoLabel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/storage_info" />
+            <TextView android:id="@+id/tvStorage" style="@style/InfoValue" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="--" />
+
+        </LinearLayout>
+    </ScrollView>
+</LinearLayout>

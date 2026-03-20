@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">iOS Device Reader</string>
+    <string name="no_device">未检测到 iOS 设备</string>
+    <string name="connecting">正在连接...</string>
+    <string name="connected">已连接</string>
+    <string name="disconnected">已断开</string>
+    <string name="reading_info">正在读取设备信息...</string>
+    <string name="btn_connect">连接设备</string>
+    <string name="btn_refresh">刷新信息</string>
+    <string name="device_name">设备名称</string>
+    <string name="device_model">设备型号</string>
+    <string name="ios_version">iOS 版本</string>
+    <string name="serial_number">序列号</string>
+    <string name="udid">UDID</string>
+    <string name="wifi_mac">WiFi MAC</string>
+    <string name="bluetooth_mac">蓝牙 MAC</string>
+    <string name="battery_level">电池电量</string>
+    <string name="storage_info">存储信息</string>
+    <string name="phone_number">电话号码</string>
+    <string name="imei">IMEI</string>
+</resources>
