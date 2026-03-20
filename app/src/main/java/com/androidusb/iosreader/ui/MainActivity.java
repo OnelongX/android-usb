@@ -81,7 +81,7 @@ public class MainActivity extends AppCompatActivity {
 
         usbManager = (UsbManager) getSystemService(USB_SERVICE);
         viewModel = new ViewModelProvider(this).get(DeviceViewModel.class);
-        viewModel.init(usbManager);
+        viewModel.init(usbManager, getApplicationContext());
 
         initViews();
         observeViewModel();
@@ -149,6 +149,16 @@ public class MainActivity extends AppCompatActivity {
                 tvErrorDetail.setVisibility(View.VISIBLE);
             } else {
                 tvErrorDetail.setVisibility(View.GONE);
+            }
+        });
+        viewModel.getPairingRequired().observe(this, required -> {
+            if (Boolean.TRUE.equals(required)) {
+                tvStatus.setText(R.string.pairing_tap_trust);
+            }
+        });
+        viewModel.getSSLActive().observe(this, active -> {
+            if (Boolean.TRUE.equals(active)) {
+                tvConnectionInfo.setText(R.string.connected_ssl);
             }
         });
     }

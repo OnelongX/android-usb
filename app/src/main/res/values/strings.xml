@@ -16,6 +16,10 @@
     <string name="usb_permission_hint">请允许 USB 访问权限以连接 iOS 设备</string>
     <string name="read_info_failed">读取信息失败</string>
     <string name="lockdownd_validation_failed">lockdownd 验证失败：设备可能不支持或需要信任此设备</string>
+    <string name="pairing_tap_trust">请在 iOS 设备上点击「信任」</string>
+    <string name="pairing_failed">配对失败</string>
+    <string name="connected_ssl">已连接 (SSL 加密)</string>
+    <string name="ssl_handshake_failed">SSL 握手失败</string>
 
     <!-- Buttons -->
     <string name="btn_connect">连接设备</string>

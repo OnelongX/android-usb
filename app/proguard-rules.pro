@@ -3,6 +3,7 @@
 # Keep model and protocol classes (accessed via reflection-like patterns in plist parsing)
 -keep class com.androidusb.iosreader.model.** { *; }
 -keep class com.androidusb.iosreader.protocol.** { *; }
+-keep class com.androidusb.iosreader.ssl.** { *; }
 
 # Keep USB connection state enum
 -keepclassmembers enum com.androidusb.iosreader.usb.ConnectionState {

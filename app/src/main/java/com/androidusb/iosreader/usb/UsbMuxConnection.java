@@ -280,6 +280,27 @@ public class UsbMuxConnection {
         return result;
     }
 
+    /**
+     * Receive raw bytes from USB without parsing a length prefix.
+     * Used by SSL transport where TLS records handle their own framing.
+     * Reads one bulk transfer worth of data.
+     */
+    public byte[] receiveRawDirect() throws IOException {
+        if (!isConnected()) {
+            throw new IOException("USB connection not open");
+        }
+
+        // Read into a larger buffer since TLS records can be up to 16KB + overhead
+        byte[] buffer = new byte[Math.max(receiveBuffer.length, 16384 + 256)];
+        int received = connection.bulkTransfer(endpointIn, buffer, buffer.length, USB_TIMEOUT_MS);
+        if (received < 0) {
+            throw new IOException("USB bulk IN transfer failed");
+        }
+        byte[] result = new byte[received];
+        System.arraycopy(buffer, 0, result, 0, received);
+        return result;
+    }
+
     public void close() {
         if (connection != null) {
             if (usbInterface != null) {
